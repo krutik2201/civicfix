@@ -12,6 +12,5 @@ A full‑stack web application that allows citizens to report local civic issues
 ### Frontend
 - **React 18 + Vite** – fast development and build tooling
 - **Tailwind CSS** + PostCSS – utility‑first styling
-- **React Router** – client‑side routing (pages: Home, Login, Register, Profile, AdminDashboard, UserApp)
-- **Public assets** – logo, robots.txt
+
 
