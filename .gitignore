@@ -1,0 +1,48 @@
+# ====================================
+# BACKEND - Python & FastAPI
+# ====================================
+backend/venv/
+backend/.venv/
+backend/test_gemini.py
+
+# ====================================
+# FRONTEND - React & Vite
+# ====================================
+frontend/node_modules/
+frontend/dist/
+frontend/clean-setup.bat
+
+# ====================================
+# COMMON / GLOBAL
+# ====================================
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables & Secrets (CRITICAL)
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.pfx
+*credentials*.json
+*serviceAccount*.json
+secrets.json
+
+# Logs
+*.log
+logs/
+
+# OS generated files & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+*.temp
+coverage/
