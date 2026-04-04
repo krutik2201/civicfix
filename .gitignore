@@ -11,6 +11,7 @@ backend/test_gemini.py
 frontend/node_modules/
 frontend/dist/
 frontend/clean-setup.bat
+frontend\package-lock.json
 
 # ====================================
 # COMMON / GLOBAL
