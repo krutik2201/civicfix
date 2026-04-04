@@ -116,24 +116,25 @@ Output: A strict JSON object.
 
 Required JSON Structure without any comments:
 {
-    "issue_detected": boolean, 
-    "issue_type": "Water Supply" | "Traffic Signal" | "Swimming Pool" | "Street Light" | "Stray Dog Sterilization and ARV" | "Stray Cattle" | "Storm Water Drainage Project" | "RRR Collection Van" | "Road Project_NEW ABOVE 18 METER" | "Road and Footpath" | "Regarding Vadodara Smart City" | "QRT" | "Public Toilet" | "Public Health" | "Parks_And_Garden" | "Open Defecation" | "Monsoon Complaints" | "Hospital And Dispensary" | "Gujarat Rural Urban Housing Scheme" | "Gas Line" | "Garbage And Cleanliness" | "ENCROACHMENT" | "Emergency" | "E Waste" | "Drainage Project" | "Drainage And Storm Drain" | "Door To Door Garbage Collection" | "Dead Animals" | "Crematorium Complain" | "City Bus Services" | "Birth And Death" | "Auditorium" | "Atithi Gruh" | "Assessment_Tax_Rebate" | "Arogyam" | "Air Quality Mgt" | "Suspicious/Fake" | "None",
+    "is_valid": boolean, 
+    "rejection_reason": "string (use empty string if none)", 
+    "category": "Road/Pothole" | "Water/Sanitation" | "Streetlight/Electrical" | "Public Building Damage",
     "severity_score": integer, 
-    "danger_reason": "string", 
-    "recommended_action": "string" 
+    "estimated_cost_inr": integer
 }
 
 Visual Recognition & Anti-Spoofing Rules:
-1. **AI/Fake Image Detection (PRIORITY 1):** Check for unnatural smoothness, cartoonish textures, impossible physics, or "hyper-realistic" AI artifacts. If the image looks AI-generated, is a video game screenshot, or depicts impossible events (like nuclear explosions or monsters):
-   - Set "issue_detected": false
-   - Set "type": "Suspicious/Fake"
+1. **AI/Fake Image Detection (PRIORITY 1):** Check for unnatural smoothness, cartoonish textures, impossible physics, or "hyper-realistic" AI artifacts. If the image looks AI-generated, is a video game screenshot, or depicts impossible events (like nuclear explosions):
+   - Set "is_valid": false
+   - Set "rejection_reason": "Image detected as AI-generated or manipulated content."
+   - Set "category": "Road/Pothole" (fallback)
    - Set "severity_score": 1
-   - Set "danger_reason": "Image detected as AI-generated or manipulated content."
-   - Set "recommended_action": "Automated Rejection: Fake Content."
+   - Set "estimated_cost_inr": 0
 
-2. **Utility Poles vs Trees:** Look closely for wires/insulators. Wires = "Electric Pole Damage". No wires + branches = "Fallen Tree".
+2. **Taxonomy Constraint:** You MUST categorize the issue strictly into one of: ["Road/Pothole", "Water/Sanitation", "Streetlight/Electrical", "Public Building Damage"].
 
-3. **Prioritize Danger (Only for Real Images):** Leaning poles, open wires, and deep manholes are Severity 9-10.
+3. **Severity:** Assign a severity score from 1 to 10 (10 being extreme danger).
+4. **Estimation:** Provide a rough estimated repair cost in INR based on visible damage. If not valid, set to 0.
 """
 
 # ==========================================
@@ -143,12 +144,19 @@ Visual Recognition & Anti-Spoofing Rules:
 class StatusUpdate(BaseModel):
     status: str
 
+class AssignUpdate(BaseModel):
+    contractor_id: str
+
 class AIAnalysisResult(BaseModel):
-    issue_detected: bool
-    issue_type: str
+    is_valid: bool
+    rejection_reason: str
+    category: str
     severity_score: int
-    danger_reason: str
-    recommended_action: str
+    estimated_cost_inr: int
+
+class AIContractorVerificationResult(BaseModel):
+    is_valid: bool
+    rejection_reason: str
 
 # ==========================================
 # 5. UTILITY FUNCTIONS
@@ -190,8 +198,11 @@ async def analyze_image(
     # --- 🛡️ RATE LIMIT CHECK (Fixed Timezone Logic) ---
     if db:
         try:
+            # ⭐ USE UTC DATE (matches Frontend's .toISOString())
             today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             
+            # Simple Query: Get ALL reports by this User
+            # ⭐ FIX: Removed .limit(50) so we count EVERYTHING from today correctly
             docs = db.collection("reports") \
                 .where("userId", "==", user_id) \
                 .stream()
@@ -199,7 +210,8 @@ async def analyze_image(
             daily_count = 0
             for doc in docs:
                 data = doc.to_dict()
-                timestamp = data.get("timestamp", "")
+                timestamp = data.get("timestamp", "") # Frontend saves ISO string
+                # Check if report date matches today (UTC)
                 if timestamp.startswith(today_prefix):
                     daily_count += 1
             
@@ -284,28 +296,23 @@ async def analyze_image(
             json_text = clean_json_response(response.text)
             ai_result = json.loads(json_text)
 
-            if "issue_type" in ai_result:
-                ai_result["type"] = ai_result.pop("issue_type")
-
             # 🛡️ SAFETY OVERRIDE
-            if ai_result.get("type") == "Suspicious/Fake":
+            if not ai_result.get("is_valid", True) or ai_result.get("rejection_reason"):
                 logger.warning("⚠️ Fake/AI Image Detected! Overriding severity.")
                 ai_result["severity_score"] = 1
-                ai_result["recommended_action"] = "Automated Rejection: Fake/AI Content Detected"
-                ai_result["danger_reason"] = "System detected AI-generated or manipulated imagery."
-                ai_result["issue_detected"] = False
+                ai_result["rejection_reason"] = ai_result.get("rejection_reason") or "System detected AI-generated or manipulated imagery."
+                ai_result["is_valid"] = False
             
-            logger.info(f"✅ AI Analysis Complete. Type: {ai_result.get('type')}")
+            logger.info(f"✅ AI Analysis Complete. Category: {ai_result.get('category')}")
 
         except Exception as e:
             logger.error(f"❌ AI Error: {e}")
             ai_result = {
-                "issue_detected": False, 
-                "error": str(e), 
-                "type": "General Issue", 
-                "severity_score": 5,
-                "danger_reason": "AI Server Overloaded. Awaiting human inspection.",
-                "recommended_action": "Manual Verification Required."
+                "is_valid": False, 
+                "rejection_reason": "AI Server Overloaded or Error: " + str(e), 
+                "category": "Road/Pothole",  # Fallback
+                "severity_score": 1,
+                "estimated_cost_inr": 0
             }
     else:
         ai_result = {"issue_detected": False, "message": "AI service unavailable."}
@@ -322,11 +329,165 @@ async def analyze_image(
         "data": ai_result
     }
 
+# --- CONTRACTOR ENDPOINTS ---
+
+@app.get("/contractor/jobs", tags=["Contractor Processing"])
+async def get_active_jobs(uid: Optional[str] = Query(None)):
+    """Fetches assigned jobs for a specific contractor, bypassing Firebase client rules."""
+    if not db: raise HTTPException(503, "Database not connected")
+    
+    docs = db.collection("reports").stream()
+    jobs = []
+    allowed_statuses = ["In-Progress", "IN_PROGRESS", "Pending Verification", "RESOLVED"]
+    
+    for doc in docs:
+        d = doc.to_dict()
+        # If uid is provided, ONLY return jobs explicitly assigned to them.
+        if uid and d.get("assigned_to") != uid:
+            continue
+            
+        if d.get("status") in allowed_statuses:
+            jobs.append({**d, "id": doc.id})
+            
+    # Sort in Python
+    def get_date(r):
+        return r.get("timestamp") or r.get("createdAt") or ""
+        
+    jobs.sort(key=get_date, reverse=True)
+    return {"jobs": jobs}
+
+@app.post("/contractor/resolve/{report_id}", tags=["Contractor Processing"])
+async def resolve_issue(
+    report_id: str,
+    file: UploadFile = File(...)
+):
+    """
+    Accepts an After photo for a report_id. Uses Gemini to verify. Updates Firestore.
+    """
+    if not db:
+        raise HTTPException(503, "Database not connected")
+    
+    logger.info(f"📸 Received After photo for report {report_id}")
+
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(400, detail="File must be an image")
+    
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(500, "Failed to process uploaded file")
+
+    # Cloudinary Upload
+    image_url = None
+    try:
+        logger.info("☁️ Uploading After image to Cloudinary...")
+        upload_result = cloudinary.uploader.upload(content, folder="civicfix_after_photos")
+        image_url = upload_result.get("secure_url")
+        logger.info(f"✅ After image uploaded to Cloudinary: {image_url}")
+    except Exception as e:
+        logger.error(f"❌ Cloudinary Upload Failed: {e}")
+        raise HTTPException(500, "Failed to upload image to storage")
+
+    ai_result = {"is_valid": True, "rejection_reason": ""}
+
+    if client:
+        try:
+            CONTRACTOR_PROMPT = 'You are an AI Anti-Spoofing Agent. Verify this image shows a completed repair or construction work. Reject AI-generated or irrelevant images. Return JSON: { "is_valid": boolean, "rejection_reason": "string (use empty string if none)" }.'
+            
+            user_message = types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text="Analyze this 'After' photo for work verification."),
+                    types.Part.from_bytes(data=content, mime_type=file.content_type)
+                ]
+            )
+
+            logger.info("🤖 Sending verification request to Gemini...")
+            response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                config=types.GenerateContentConfig(
+                    system_instruction=CONTRACTOR_PROMPT,
+                    temperature=0.2, 
+                    response_mime_type="application/json",
+                    response_schema=AIContractorVerificationResult
+                ),
+                contents=[user_message]
+            )
+            json_text = clean_json_response(response.text)
+            parsed_result = json.loads(json_text)
+            ai_result["is_valid"] = parsed_result.get("is_valid", True)
+            ai_result["rejection_reason"] = parsed_result.get("rejection_reason", "")
+            
+        except Exception as e:
+            logger.error(f"❌ AI Verification Error: {e}")
+            ai_result = {"is_valid": False, "rejection_reason": "AI Verification Failed. Server Error."}
+    
+    if not ai_result.get("is_valid"):
+        return {
+            "status": "rejected",
+            "reason": ai_result.get("rejection_reason"),
+            "imageUrl": image_url
+        }
+
+    # Update Firestore
+    try:
+        doc_ref = db.collection("reports").document(report_id)
+        # Using dot notation to update nested field might require specific syntax in firebase python SDK,
+        # safely we can fetch, then update, or just update root level 'after_url' and 'status'
+        doc_ref.update({
+            "status": "Pending Verification",
+            "after_url": image_url, # Storing at root level for safety
+            "images.after_url": image_url, # Trying dot notation
+        })
+        logger.info(f"✅ Report {report_id} updated to Pending Verification")
+    except Exception as e:
+        logger.error(f"❌ Firestore update failed: {e}")
+        raise HTTPException(500, "Failed to update database")
+        
+    return {
+        "status": "success",
+        "data": {
+            "is_valid": True,
+            "after_url": image_url,
+        }
+    }
+
+@app.patch("/user/reports/{report_id}/feedback", tags=["User Actions"])
+async def submit_citizen_feedback(report_id: str, feedback: dict = Body(...)):
+    if not db: raise HTTPException(503, "Database not connected")
+    
+    try:
+        db.collection("reports").document(report_id).update({
+            "citizen_rating": feedback.get("rating"),
+            "citizen_feedback": feedback.get("text", ""),
+            "rated_at": datetime.now(timezone.utc).isoformat()
+        })
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to save feedback: {e}")
+        raise HTTPException(500, "Failed to update feedback")
+
 # --- ADMIN ENDPOINTS ---
 
 async def verify_admin(x_admin_secret: str = Header(...)):
     if x_admin_secret != os.getenv("ADMIN_SECRET_KEY", "hackathon_admin_123"):
         raise HTTPException(status_code=403, detail="Unauthorized Admin Access")
+
+@app.get("/admin/contractors", dependencies=[Depends(verify_admin)])
+async def get_all_contractors():
+    if not db: raise HTTPException(503, "Database not connected")
+    docs = db.collection("users").where("role", "==", "contractor").stream()
+    contractors = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+    return {"contractors": contractors}
+
+@app.patch("/admin/reports/{report_id}/assign", dependencies=[Depends(verify_admin)])
+async def assign_report(report_id: str, assign_data: AssignUpdate):
+    if not db: raise HTTPException(503, "Database not connected")
+    db.collection("reports").document(report_id).update({
+        "status": "In-Progress",
+        "assigned_to": assign_data.contractor_id
+    })
+    return {"success": True}
 
 @app.get("/admin/reports", dependencies=[Depends(verify_admin)])
 async def get_all_reports():
@@ -345,7 +506,14 @@ async def get_all_reports():
 @app.patch("/admin/reports/{report_id}", dependencies=[Depends(verify_admin)])
 async def update_report_status(report_id: str, update_data: StatusUpdate):
     if not db: raise HTTPException(503, "Database not connected")
-    db.collection("reports").document(report_id).update({"status": update_data.status})
+    
+    update_payload = {"status": update_data.status}
+    if update_data.status == "In-Progress":
+        from google.cloud import firestore
+        update_payload["after_url"] = firestore.DELETE_FIELD
+        update_payload["images.after_url"] = firestore.DELETE_FIELD
+        
+    db.collection("reports").document(report_id).update(update_payload)
     return {"success": True}
 
 @app.delete("/admin/reports/{report_id}", dependencies=[Depends(verify_admin)])

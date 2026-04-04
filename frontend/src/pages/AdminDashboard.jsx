@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { getAllReports, updateReportStatus as apiUpdateStatus, deleteReport as apiDeleteReport } from '../services/api';
+import { getAllReports, updateReportStatus as apiUpdateStatus, deleteReport as apiDeleteReport, getContractors, assignReportToContractor } from '../services/api';
 import * as XLSX from 'xlsx';
-// ⭐ NEW: Imported MarkerF and InfoWindowF for React 18 support
-import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from '@react-google-maps/api'; 
+import { MapContainer, TileLayer, Marker, Popup, LayersControl, LayerGroup } from 'react-leaflet';
+import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { useToast } from '../contexts/ToastContext';
 import { 
   FiFilter, FiSearch, FiCheckCircle, FiTrash2, FiMapPin, 
   FiCalendar, FiAlertTriangle, FiLoader, FiDownload, FiEyeOff, FiExternalLink,
-  FiDroplet, FiZap, FiTarget, FiAlertCircle, FiList, FiMap, FiPieChart
+  FiDroplet, FiZap, FiTarget, FiAlertCircle, FiList, FiMap, FiPieChart, FiX, FiStar
 } from 'react-icons/fi';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -17,35 +18,21 @@ import {
 const mapContainerStyle = { width: '100%', height: '100%', borderRadius: '1rem' };
 const defaultCenter = { lat: 22.3, lng: 73.2 };
 
-// Custom Apple-like Minimalist Silver/Blue Google Map Theme
-const cleanMapStyles = [
-  { elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
-  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#616161" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#f5f5f5" }] },
-  { featureType: "administrative.land_parcel", elementType: "labels.text.fill", stylers: [{ color: "#bdbdbd" }] },
-  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#eeeeee" }] },
-  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#757575" }] },
-  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#e5e5e5" }] },
-  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#9e9e9e" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-  { featureType: "road.arterial", elementType: "labels.text.fill", stylers: [{ color: "#757575" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#dadada" }] },
-  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#616161" }] },
-  { featureType: "road.local", elementType: "labels.text.fill", stylers: [{ color: "#9e9e9e" }] },
-  { featureType: "transit.line", elementType: "geometry", stylers: [{ color: "#e5e5e5" }] },
-  { featureType: "transit.station", elementType: "geometry", stylers: [{ color: "#eeeeee" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9c9c9" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#9e9e9e" }] }
-];
-
-// Returns an inline SVG string colored by Dynamic Status/Severity Variables
+// Returns a Leaflet divIcon colored by Dynamic Status/Severity Variables
 const getCustomMarkerIcon = (report, severity) => {
-  let color = '%23f97316'; // brand-warning (orange) Default
-  if (report.status === 'RESOLVED') color = '%2316a34a'; // brand-success (green)
-  else if (severity >= 8) color = '%23dc2626'; // brand-error (red)
+  let color = '#f97316'; // brand-warning (orange) Default
+  if (report.status === 'RESOLVED') color = '#16a34a'; // brand-success (green)
+  else if (severity >= 8) color = '#dc2626'; // brand-error (red)
 
-  return `data:image/svg+xml;utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" stroke="%23ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3" fill="%23ffffff"></circle></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" stroke="%23ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3" fill="%23ffffff"></circle></svg>`;
+
+  return L.divIcon({
+    className: "custom-pin",
+    iconSize: [44, 44],
+    iconAnchor: [22, 44],
+    popupAnchor: [0, -40],
+    html: `<div style="width: 44px; height: 44px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.2));">${svg}</div>`
+  });
 };
 
 const AdminDashboard = () => {
@@ -56,6 +43,7 @@ const AdminDashboard = () => {
   const [sortOrder, setSortOrder] = useState('newest'); 
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('list');
+  const [contractors, setContractors] = useState([]);
   
   // ⭐ NEW: State to track which pin is clicked
   const [selectedReport, setSelectedReport] = useState(null);
@@ -64,10 +52,7 @@ const AdminDashboard = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  const { isLoaded } = useJsApiLoader({
-    id: 'google-map-script',
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY
-  });
+
 
   // --- HELPERS ---
   const parseDate = (val) => {
@@ -93,10 +78,10 @@ const AdminDashboard = () => {
 
   const getReportIcon = (report) => {
     if (report.status === 'RESOLVED') return <FiCheckCircle size={32} className="text-green-500" />;
-    const type = report.type?.toLowerCase() || '';
-    if (type.includes('water') || type.includes('flood')) return <FiDroplet size={32} className="text-blue-400" />;
+    const type = (report.category || report.type || '').toLowerCase();
+    if (type.includes('water') || type.includes('flood') || type.includes('sanitation')) return <FiDroplet size={32} className="text-blue-400" />;
     if (type.includes('light') || type.includes('electric')) return <FiZap size={32} className="text-yellow-400" />;
-    if (type.includes('pothole') || type.includes('road')) return <FiTarget size={32} className="text-gray-400" />;
+    if (type.includes('pothole') || type.includes('road') || type.includes('building')) return <FiTarget size={32} className="text-gray-400" />;
     return <FiAlertCircle size={32} className="text-orange-400" />;
   };
 
@@ -134,8 +119,28 @@ const AdminDashboard = () => {
     }
   };
 
+  const fetchContractors = async () => {
+    try {
+      const resp = await getContractors();
+      if (resp.contractors) setContractors(resp.contractors);
+    } catch (e) { console.error("Failed to fetch contractors"); }
+  };
+
   useEffect(() => {
-    const token = localStorage.getItem('adminSecret');
+    let token = localStorage.getItem('adminSecret');
+    const userStr = localStorage.getItem('user');
+    
+    try {
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        if (user && user.role === 'admin') {
+           // Auto-inject the admin secret if they logged in via Firebase as an admin
+           token = 'hackathon_admin_123';
+           localStorage.setItem('adminSecret', token);
+        }
+      }
+    } catch(e) {}
+
     if (token) {
       setIsAuthenticated(true);
     } else {
@@ -146,6 +151,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (isAuthenticated) {
       fetchReports(false);
+      fetchContractors();
       const interval = setInterval(() => fetchReports(true), 10000);
       return () => clearInterval(interval);
     }
@@ -185,9 +191,14 @@ const AdminDashboard = () => {
 
   const handleExport = () => {
     const data = filteredReports.map(r => ({
-      "Type": r.type, "Severity": getSeverity(r), "Status": r.status,
-      "Address": r.location?.address, "Coordinates": formatCoords(r.location),
-      "Risk": r.dangerReason || r.danger_reason, "Action": r.recommendedAction || r.recommended_action
+      "Tracking ID": r.issue_id || "N/A",
+      "Category": r.category || r.type, 
+      "Severity": getSeverity(r), 
+      "Status": r.status,
+      "Reporter": r.reporter_info?.name || r.userName || "N/A",
+      "Phone": r.reporter_info?.phone || r.userPhone || "N/A",
+      "Address": r.location?.address, 
+      "Coordinates": formatCoords(r.location)
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -198,12 +209,16 @@ const AdminDashboard = () => {
   const getFilteredReports = () => {
     let result = validReports.filter(report => {
       const score = getSeverity(report);
-      if (filter === 'OPEN' && report.status !== 'OPEN') return false;
+      if (filter === 'OPEN' && !['OPEN', 'Reported', 'In-Progress'].includes(report.status)) return false;
+      if (filter === 'PENDING' && report.status !== 'Pending Verification') return false;
       if (filter === 'RESOLVED' && report.status !== 'RESOLVED') return false;
       if (filter === 'CRITICAL' && score < 8) return false;
       if (searchTerm) {
         const t = searchTerm.toLowerCase();
-        return report.type?.toLowerCase().includes(t) || report.location?.address?.toLowerCase().includes(t);
+        const cat = (report.category || report.type || '').toLowerCase();
+        const address = (report.location?.address || '').toLowerCase();
+        const id = (report.issue_id || '').toLowerCase();
+        return cat.includes(t) || address.includes(t) || id.includes(t);
       }
       return true;
     });
@@ -257,11 +272,11 @@ const AdminDashboard = () => {
         </div>
         <div className="bg-red-50 p-6 rounded-3xl shadow-lg border border-red-100 hover:shadow-xl transition-all hover:-translate-y-1">
           <p className="text-red-400 text-xs uppercase font-bold tracking-wider">Critical</p>
-          <p className="text-4xl font-black text-red-600 mt-2">{validReports.filter(r => getSeverity(r) >= 8 && r.status === 'OPEN').length}</p>
+          <p className="text-4xl font-black text-red-600 mt-2">{validReports.filter(r => getSeverity(r) >= 8 && ['OPEN', 'Reported', 'In-Progress'].includes(r.status)).length}</p>
         </div>
         <div className="bg-blue-50 p-6 rounded-3xl shadow-lg border border-blue-100 hover:shadow-xl transition-all hover:-translate-y-1">
           <p className="text-blue-400 text-xs uppercase font-bold tracking-wider">Active</p>
-          <p className="text-4xl font-black text-blue-600 mt-2">{validReports.filter(r => r.status === 'OPEN').length}</p>
+          <p className="text-4xl font-black text-blue-600 mt-2">{validReports.filter(r => ['OPEN', 'Reported', 'In-Progress'].includes(r.status)).length}</p>
         </div>
         <div className="bg-green-50 p-6 rounded-3xl shadow-lg border border-green-100 hover:shadow-xl transition-all hover:-translate-y-1">
           <p className="text-green-500 text-xs uppercase font-bold tracking-wider">Fixed</p>
@@ -272,7 +287,7 @@ const AdminDashboard = () => {
       {/* CONTROLS */}
       <div className="bg-white p-6 rounded-3xl shadow-lg border border-gray-100 flex flex-col lg:flex-row gap-5 justify-between items-center mt-2">
         <div className="flex gap-2 bg-brand-bg p-1.5 rounded-2xl border border-gray-200">
-          {['ALL', 'OPEN', 'CRITICAL', 'RESOLVED'].map(f => (
+          {['ALL', 'OPEN', 'CRITICAL', 'PENDING', 'RESOLVED'].map(f => (
             <button key={f} onClick={() => setFilter(f)} className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95 ${filter === f ? 'bg-brand-primary text-white shadow-md' : 'text-gray-500 hover:text-brand-primary hover:bg-white'}`}>{f}</button>
           ))}
         </div>
@@ -297,7 +312,7 @@ const AdminDashboard = () => {
 
       {/* VIEW CONTENT */}
       {viewMode === 'analytics' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 animate-fadeIn">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6 animate-fadeIn">
            {/* STATUS DONUT */}
            <div className="bg-white rounded-3xl p-6 shadow-xl border border-gray-100 flex flex-col hover:shadow-2xl transition-all">
               <h3 className="font-black text-brand-primary mb-2 flex items-center gap-2"><FiPieChart /> Fix Rate (Status)</h3>
@@ -346,12 +361,33 @@ const AdminDashboard = () => {
               </div>
            </div>
 
+           {/* CITIZEN SATISFACTION */}
+           <div className="bg-gradient-to-br from-brand-primary to-slate-900 rounded-3xl p-6 shadow-xl border border-gray-800 flex flex-col justify-center items-center text-center hover:shadow-2xl transition-all relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-bl-full pointer-events-none"></div>
+               <h3 className="font-black text-white/80 mb-2 uppercase tracking-widest text-xs">Avg. Citizen Rating</h3>
+               <div className="flex flex-col items-center gap-2">
+                   {(() => {
+                       const rated = validReports.filter(r => r.citizen_rating);
+                       const avg = rated.length ? (rated.reduce((a,b) => a + b.citizen_rating, 0) / rated.length).toFixed(1) : 0;
+                       return (
+                           <>
+                               <div className="text-6xl font-black text-white drop-shadow-lg">{avg || "-"}</div>
+                               <div className="flex gap-1 mt-2">
+                                   {[1,2,3,4,5].map(s => <FiStar key={s} className={`text-2xl ${s <= Math.round(Number(avg)) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-600'}`} />)}
+                               </div>
+                               <p className="text-xs font-bold text-white/60 mt-2">{rated.length} Reviews</p>
+                           </>
+                       );
+                   })()}
+               </div>
+           </div>
+
            {/* CATEGORIES BAR */}
-           <div className="bg-white rounded-3xl p-6 shadow-xl border border-gray-100 flex flex-col hover:shadow-2xl transition-all lg:col-span-2">
+           <div className="bg-white rounded-3xl p-6 shadow-xl border border-gray-100 flex flex-col hover:shadow-2xl transition-all lg:col-span-3">
               <h3 className="font-black text-brand-primary mb-4">Top Issue Categories</h3>
               <div className="h-72 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                     <BarChart data={Object.entries(validReports.reduce((acc, r) => { acc[r.type || 'Other'] = (acc[r.type || 'Other'] || 0) + 1; return acc; }, {})).map(([name, count]) => ({ name, count })).sort((a,b) => b.count - a.count).slice(0, 7)} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                      <BarChart data={Object.entries(validReports.reduce((acc, r) => { const cat = r.category || r.type || 'Other'; acc[cat] = (acc[cat] || 0) + 1; return acc; }, {})).map(([name, count]) => ({ name, count })).sort((a,b) => b.count - a.count).slice(0, 7)} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                         <XAxis dataKey="name" tick={{fontSize: 11, fill: '#64748b', fontWeight: 800}} axisLine={false} tickLine={false} />
                         <YAxis tick={{fontSize: 12, fill: '#64748b', fontWeight: 800}} axisLine={false} tickLine={false} />
                         <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }} />
@@ -370,39 +406,100 @@ const AdminDashboard = () => {
                 const severity = getSeverity(report);
                 return (
                     <div key={report.id} className="p-6 hover:bg-gray-50 transition-colors flex flex-col lg:flex-row gap-6">
-                        <div className="w-full lg:w-48 h-40 bg-gray-50 rounded-xl flex-shrink-0 flex flex-col items-center justify-center border border-gray-100 text-gray-400 overflow-hidden relative group">
-                            {report.imageUrl ? (
-                              <>
-                                <img src={report.imageUrl} alt={report.type} className="absolute inset-0 w-full h-full object-cover" />
-                                <a href={report.imageUrl} target="_blank" rel="noreferrer" className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white font-bold transition duration-300">
-                                  <FiExternalLink className="text-2xl mb-1" /> View Full
-                                </a>
-                              </>
-                            ) : (
-                              <>
-                                {getReportIcon(report)}
-                                <p className="text-[10px] mt-2 font-medium uppercase tracking-wider text-center">{report.type}</p>
-                              </>
-                            )}
+                        <div className="flex flex-col gap-2 flex-shrink-0 border border-gray-100 p-2 rounded-xl bg-white shadow-sm w-full lg:w-auto">
+                            <div className="flex gap-2 h-full">
+                                <div className="w-full lg:w-40 h-32 bg-gray-50 rounded-lg flex flex-col items-center justify-center text-gray-400 overflow-hidden relative group">
+                                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-md z-10">Before</div>
+                                    {(report.images?.before_url || report.imageUrl) ? (
+                                      <>
+                                        <img src={report.images?.before_url || report.imageUrl} alt={report.category || report.type} className="absolute inset-0 w-full h-full object-cover" />
+                                        <a href={report.images?.before_url || report.imageUrl} target="_blank" rel="noreferrer" className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white font-bold transition duration-300 z-20">
+                                          <FiExternalLink className="text-xl mb-1" /> View Full
+                                        </a>
+                                      </>
+                                    ) : (
+                                      <>
+                                        {getReportIcon(report)}
+                                        <p className="text-[10px] mt-2 font-medium uppercase tracking-wider text-center">{report.category}</p>
+                                      </>
+                                    )}
+                                </div>
+
+                                {report.images?.after_url && (
+                                    <div className="w-full lg:w-40 h-32 bg-gray-50 rounded-lg flex flex-col items-center justify-center text-gray-400 overflow-hidden relative group">
+                                        <div className="absolute top-1 right-1 bg-brand-success text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-md z-10">After</div>
+                                        <img src={report.images.after_url} alt="After Repair" className="absolute inset-0 w-full h-full object-cover" />
+                                        <a href={report.images.after_url} target="_blank" rel="noreferrer" className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white font-bold transition duration-300 z-20">
+                                            <FiExternalLink className="text-xl mb-1" /> View Proof
+                                        </a>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         <div className="flex-grow">
-                            <div className="flex flex-wrap items-center gap-3 mb-2">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
                             <span className={`px-2.5 py-0.5 rounded text-xs font-bold border ${getSeverityBadge(severity)}`}>Severity: {severity}/10</span>
-                            <span className={`px-2.5 py-0.5 rounded text-xs font-bold border ${report.status === 'OPEN' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-green-50 text-green-700 border-green-100'}`}>{report.status}</span>
-                            <span className="text-xs text-gray-400 font-medium flex items-center gap-1"><FiCalendar /> {timeAgo(report.timestamp)}</span>
+                            <span className={`px-2.5 py-0.5 rounded text-xs font-bold border ${report.status === 'OPEN' || report.status === 'Reported' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-green-50 text-green-700 border-green-100'}`}>{report.status}</span>
+                            <span className="text-xs font-mono font-black text-brand-primary tracking-widest bg-brand-bg px-2 py-0.5 rounded border border-brand-primary/10">ID: {report.issue_id || 'PENDING'}</span>
+                            <span className="text-xs text-gray-400 font-medium flex items-center gap-1 sm:ml-auto"><FiCalendar /> {timeAgo(report.timestamp)}</span>
                             </div>
-                            <h3 className="text-lg font-bold text-gray-900 mb-1">{report.type}</h3>
-                            <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-3 text-sm text-gray-500 mb-4">
-                                <div className="flex items-center gap-1"><FiMapPin className="text-red-400" /> <span>{report.location?.address || 'Unknown'}</span></div>
-                                <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">{formatCoords(report.location)}</span>
+                            <h3 className="text-lg font-black text-gray-900 mb-1">{report.category || report.type || 'Unknown Category'}</h3>
+                            <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-3 text-sm text-gray-500 mb-4 min-w-0">
+                                <div className="flex items-center gap-1 min-w-0"><FiMapPin className="text-red-400 shrink-0" /> <span className="truncate">{report.location?.address || 'Unknown Location'}</span></div>
+                                <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-100 shrink-0">{formatCoords(report.location)}</span>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100 text-sm">
-                                <div><p className="text-[10px] uppercase font-bold text-gray-400">Risk</p><p className="text-gray-800">{report.dangerReason || report.danger_reason || "Pending..."}</p></div>
-                                <div><p className="text-[10px] uppercase font-bold text-gray-400">Action</p><p className="text-blue-700 font-semibold">{report.recommendedAction || report.recommended_action || "Review Needed"}</p></div>
+                            <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 text-sm mb-3">
+                                <div>
+                                    <p className="text-[10px] uppercase font-bold text-gray-400 mb-1">Reporter Details</p>
+                                    <p className="font-bold text-gray-800">{report.reporter_info?.name || report.userName || 'Citizen'} <span className="text-gray-500 font-medium ml-2">{report.reporter_info?.phone || report.userPhone || ''}</span></p>
+                                </div>
                             </div>
+
+                            {report.citizen_rating && (
+                                <div className="bg-gradient-to-r from-brand-bg to-white p-3.5 rounded-xl border border-gray-200 flex flex-col gap-1.5 shadow-sm">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Citizen Rating</span>
+                                        <div className="flex gap-0.5">
+                                            {[1, 2, 3, 4, 5].map(star => (
+                                                <FiStar key={star} className={`text-sm ${star <= report.citizen_rating ? 'fill-yellow-400 text-yellow-400 drop-shadow-sm' : 'text-gray-200'}`} />
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {report.citizen_feedback && (
+                                        <p className="text-sm italic text-gray-600 font-medium whitespace-break-spaces bg-white p-2.5 rounded-lg shadow-sm border border-gray-50 flex items-start gap-2">
+                                            <span className="text-xl text-gray-300 font-serif leading-none">"</span>
+                                            <span>{report.citizen_feedback}</span>
+                                            <span className="text-xl text-gray-300 font-serif leading-none mt-auto">"</span>
+                                        </p>
+                                    )}
+                                </div>
+                            )}
                         </div>
                         <div className="flex lg:flex-col justify-end gap-3 lg:border-l lg:border-gray-100 lg:pl-6">
-                            {report.status !== 'RESOLVED' && <button onClick={() => updateStatus(report.id, 'RESOLVED')} className="flex items-center justify-center gap-2 px-5 py-3 bg-brand-success/10 text-brand-success rounded-xl hover:bg-brand-success hover:text-white font-bold text-xs transition-all active:scale-95 shadow-sm"><FiCheckCircle size={16} /> Resolve</button>}
+                            {report.status === 'Pending Verification' ? (
+                                <>
+                                    <button onClick={() => updateStatus(report.id, 'RESOLVED')} className="flex items-center justify-center gap-2 px-4 py-3 bg-brand-success text-white rounded-xl hover:bg-green-700 font-bold text-xs transition-all active:scale-95 shadow-md"><FiCheckCircle size={16} /> Approve Fix</button>
+                                    <button onClick={() => updateStatus(report.id, 'In-Progress')} className="flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 font-bold text-xs transition-all active:scale-95 border border-red-100"><FiX size={16} /> Reject Fix</button>
+                                </>
+                            ) : (report.status === 'OPEN' || report.status === 'Reported' || report.status === 'In-Progress') ? (
+                                <select 
+                                    onChange={async (e) => {
+                                        if (!e.target.value) return;
+                                        try {
+                                            await assignReportToContractor(report.id, e.target.value);
+                                            toast.success("Job Assigned Successfully!");
+                                            fetchReports(true);
+                                        } catch(err) { toast.error("Failed to assign job"); }
+                                    }}
+                                    className="bg-brand-bg border border-gray-200 text-brand-primary text-xs font-bold rounded-xl px-4 py-3 outline-none hover:border-brand-primary transition-all cursor-pointer"
+                                    defaultValue={report.assigned_to || ""}
+                                >
+                                    <option value="" disabled>Assign Contractor...</option>
+                                    {contractors.map(c => <option key={c.id} value={c.id}>{c.name ? `${c.name} (${c.email})` : c.email}</option>)}
+                                </select>
+                            ) : report.status !== 'RESOLVED' && (
+                                <button onClick={() => updateStatus(report.id, 'RESOLVED')} className="flex items-center justify-center gap-2 px-5 py-3 bg-brand-success/10 text-brand-success rounded-xl hover:bg-brand-success hover:text-white font-bold text-xs transition-all active:scale-95 shadow-sm"><FiCheckCircle size={16} /> Resolve</button>
+                            )}
                             <button onClick={() => deleteReport(report.id)} className="flex items-center justify-center gap-2 px-5 py-3 border-2 border-brand-bg text-gray-500 rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-100 font-bold text-xs transition-all active:scale-95"><FiTrash2 size={16} /> Delete</button>
                         </div>
                     </div>
@@ -412,72 +509,73 @@ const AdminDashboard = () => {
             )}
         </div>
       ) : (
-        // --- ⭐ GOOGLE MAP VIEW (Fixed for React 18) ⭐ ---
+        // --- ⭐ NATIVE LEAFLET MAP VIEW (Fixes Google Billing) ⭐ ---
         <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden h-[600px] relative z-0 mt-6 group">
             <div className="absolute inset-0 border-[6px] border-white pointer-events-none z-10 rounded-3xl"></div>
-            {isLoaded ? (
-                <GoogleMap
-                    mapContainerStyle={mapContainerStyle}
-                    center={defaultCenter}
-                    zoom={10}
-                >
-                    {filteredReports.map((report) => {
-                        const coords = getCoordinates(report);
-                        if (coords) {
-                            // ⭐ Changed Marker to MarkerF for React 18 support
-                            return (
-                                <MarkerF 
-                                    key={report.id} 
-                                    position={coords}
-                                    onClick={() => setSelectedReport(report)}
-                                    icon={{
-                                        url: getCustomMarkerIcon(report, getSeverity(report)),
-                                        scaledSize: { width: 44, height: 44 },
-                                        anchor: { x: 22, y: 44 }
-                                    }}
-                                />
-                            );
-                        }
-                        return null;
-                    })}
-
-                    {/* ⭐ Info Window (Popup) */}
-                    {selectedReport && (
-                        <InfoWindowF
-                            position={getCoordinates(selectedReport)}
-                            onCloseClick={() => setSelectedReport(null)}
-                            options={{ disableAutoPan: false, pixelOffset: { width: 0, height: -10 } }}
-                        >
-                            <div className="p-3 min-w-[240px] font-sans">
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest text-white shadow-sm ${getSeverity(selectedReport) >= 8 ? 'bg-brand-error' : 'bg-brand-warning'}`}>
-                                        Sev: {getSeverity(selectedReport)}/10
-                                    </span>
-                                    <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest ${selectedReport.status === 'OPEN' ? 'bg-brand-bg text-gray-500 border border-gray-200' : 'bg-brand-success/10 text-brand-success border border-brand-success/20'}`}>
-                                        {selectedReport.status}
-                                    </span>
-                                </div>
-                                
-                                <h3 className="font-black text-brand-primary text-base mb-1">{selectedReport.type}</h3>
-                                <p className="text-xs text-gray-500 mb-4 line-clamp-2 border-b border-gray-100 pb-3">{selectedReport.location?.address}</p>
-                                
-                                <button 
-                                    onClick={() => {
-                                        window.open(`http://maps.google.com/maps?q=${getCoordinates(selectedReport).lat},${getCoordinates(selectedReport).lng}`, '_blank');
-                                    }}
-                                    className="w-full text-xs bg-brand-bg text-brand-primary font-bold py-2 rounded-xl hover:bg-white hover:border-brand-primary transition-all active:scale-95 border border-gray-200 shadow-sm flex items-center justify-center gap-2"
-                                >
-                                    <FiExternalLink /> Open Vector Map
-                                </button>
-                            </div>
-                        </InfoWindowF>
-                    )}
-                </GoogleMap>
-            ) : (
-                <div className="flex h-full items-center justify-center bg-gray-50 text-gray-400 font-bold animate-pulse">
-                    <FiMapPin className="mr-2" /> Loading Google Maps...
-                </div>
-            )}
+            <MapContainer 
+                center={[(defaultCenter?.lat || 22.3), (defaultCenter?.lng || 73.1)]} 
+                zoom={12} 
+                className="w-full h-full z-0"
+                zoomControl={false}
+            >
+                <LayersControl position="topright">
+                    <LayersControl.BaseLayer checked name="Satellite Hybrid">
+                        <LayerGroup>
+                            <TileLayer
+                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                                attribution='Tiles &copy; Esri'
+                            />
+                            <TileLayer
+                                url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+                                attribution='Reference Labels &copy; Esri'
+                            />
+                        </LayerGroup>
+                    </LayersControl.BaseLayer>
+                    <LayersControl.BaseLayer name="Street Layout">
+                        <TileLayer
+                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        />
+                    </LayersControl.BaseLayer>
+                </LayersControl>
+                
+                {filteredReports.map((report) => {
+                    const coords = getCoordinates(report);
+                    if (coords) {
+                        return (
+                            <Marker 
+                                key={report.id} 
+                                position={[coords.lat, coords.lng]}
+                                icon={getCustomMarkerIcon(report, getSeverity(report))}
+                            >
+                                <Popup className="civicfix-popup" closeButton={false}>
+                                    <div className="p-2 min-w-[220px] font-sans">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest text-white shadow-sm ${getSeverity(report) >= 8 ? 'bg-red-500' : 'bg-orange-500'}`}>
+                                                Sev: {getSeverity(report)}/10
+                                            </span>
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${report.status === 'OPEN' ? 'bg-gray-100 text-gray-500' : 'bg-green-100 text-green-700'}`}>
+                                                {report.status}
+                                            </span>
+                                        </div>
+                                        
+                                        <h3 className="font-black text-slate-800 text-sm mb-1">{report.category || report.type || 'Unknown Category'}</h3>
+                                        <p className="text-xs text-slate-500 mb-3 line-clamp-2">{report.location?.address}</p>
+                                        
+                                        <button 
+                                            onClick={() => window.open(`http://maps.google.com/maps?q=${coords.lat},${coords.lng}`, '_blank')}
+                                            className="w-full text-xs bg-slate-50 text-brand-primary font-bold py-2 rounded shadow-sm hover:bg-slate-100 transition-all flex items-center justify-center gap-1"
+                                        >
+                                            <FiExternalLink /> Open GPS Vector
+                                        </button>
+                                    </div>
+                                </Popup>
+                            </Marker>
+                        );
+                    }
+                    return null;
+                })}
+            </MapContainer>
         </div>
       )}
     </div>

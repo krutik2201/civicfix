@@ -1,20 +1,19 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-
-// Added .jsx extensions here to fix the Vite import error!
-import { ToastProvider } from './contexts/ToastContext.jsx';
-import Toast from './components/shared/Toast.jsx';
+import { ToastProvider } from './contexts/ToastContext';
+import Toast from './components/shared/Toast';
 
 // Layouts - Keeping these static so the "Shell" loads instantly
-import UserLayout from './components/layout/UserLayout.jsx';
-import AdminLayout from './components/layout/AdminLayout.jsx';
-import Layout from './components/layout/Layout.jsx';
+import UserLayout from './components/layout/UserLayout';
+import AdminLayout from './components/layout/AdminLayout';
+import Layout from './components/layout/Layout';
 
 // Lazy Load Pages (Code Splitting)
 const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const UserApp = lazy(() => import('./pages/UserApp'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const ContractorApp = lazy(() => import('./pages/ContractorApp'));
 
 // Reusable Loading Spinner Component
 const LoadingSpinner = () => (
@@ -42,7 +41,9 @@ function App() {
     
     const userRole = getRole();
     if (allowedRoles && !allowedRoles.includes(userRole)) {
-      return <Navigate to={userRole === 'admin' ? '/admin' : '/user'} replace />;
+      if (userRole === 'admin') return <Navigate to="/admin" replace />;
+      if (userRole === 'contractor') return <Navigate to="/contractor" replace />;
+      return <Navigate to="/user" replace />;
     }
 
     return <Outlet />;
@@ -69,7 +70,7 @@ function App() {
             {/* ROOT REDIRECT */}
             <Route path="/" element={
               isLoggedIn() 
-                ? <Navigate to={getRole() === 'admin' ? '/admin' : '/user'} replace /> 
+                ? <Navigate to={getRole() === 'admin' ? '/admin' : getRole() === 'contractor' ? '/contractor' : '/user'} replace /> 
                 : <Navigate to="/login" replace />
             } />
 
@@ -84,6 +85,13 @@ function App() {
             <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
               <Route element={<AdminLayout />}>
                 <Route path="/admin" element={<AdminDashboard />} />
+              </Route>
+            </Route>
+
+            {/* CONTRACTOR ROUTES */}
+            <Route element={<ProtectedRoute allowedRoles={['contractor', 'admin']} />}>
+              <Route element={<UserLayout />}>
+                <Route path="/contractor" element={<ContractorApp />} />
               </Route>
             </Route>
 

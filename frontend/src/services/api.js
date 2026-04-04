@@ -85,4 +85,24 @@ export const getReportById = async (reportId) => {
   }
 };
 
+export const getContractors = async () => {
+  try {
+    const response = await api.get('/admin/contractors');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching contractors:', error);
+    throw error;
+  }
+};
+
+export const assignReportToContractor = async (reportId, contractorId) => {
+  try {
+    const response = await api.patch(`/admin/reports/${reportId}/assign`, { contractor_id: contractorId });
+    return response.data;
+  } catch (error) {
+    console.error('Error assigning report to contractor:', error);
+    throw error;
+  }
+};
+
 export default api;
