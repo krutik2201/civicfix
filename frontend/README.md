@@ -1,12 +1,14 @@
-# CivicFix Frontend
+# CivicFix Frontend 
+**AI-Powered Infrastructure Reporting (Hacksagon 2026)**
 
-This is the frontend for the CivicFix platform, an AI-powered infrastructure reporting system built for **Hacksagon 2026**.
+##  Project Status: Core UI & Routing Established
 
-## Tech Stack
-- React + Vite
-- Tailwind CSS
-- Firebase (Auth, Firestore)
-- React Router
+The frontend skeleton, routing architecture, and shared layouts are now fully implemented. 
 
-## Project Status
-Currently establishing the foundation and authentication flows (Login, Register, and Protected Routes). Complex UI components and Dashboards are intentionally excluded in the current stage to ensure a clean commit structure for mid-evaluation.
+**Currently Integrated (UI Foundation):**
+* **Role-Based Layouts:** Dedicated wrappers for `AdminLayout` and `UserLayout` to securely separate views.
+* **Global Routing:** Main React entry points and protected routes wired up via React Router.
+* **Shared UI:** Navigation headers, footers, and global styling (Tailwind CSS) successfully applied.
+* **Auth State:** Firebase Authentication and Login/Register screens are active.
+
+*Next up: AI-powered Citizen Reporting UI and the Admin Triage Dashboard just in time for the mid-evaluation.*
