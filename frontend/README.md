@@ -1,14 +1,15 @@
-# CivicFix Frontend 
+# CivicFix Frontend 🏙️
 **AI-Powered Infrastructure Reporting (Hacksagon 2026)**
 
-##  Project Status: Core UI & Routing Established
+## 🚀 Project Status: Citizen App Live
 
-The frontend skeleton, routing architecture, and shared layouts are now fully implemented. 
+The frontend architecture and the Citizen Reporting workflow are now fully implemented!
 
-**Currently Integrated (UI Foundation):**
-* **Role-Based Layouts:** Dedicated wrappers for `AdminLayout` and `UserLayout` to securely separate views.
+**Currently Integrated:**
+* **Citizen Portal:** Live. Users can seamlessly upload geo-tagged photos of infrastructure issues, view the Gemini AI analysis loading sequence, and track their reports in real-time.
+* **Role-Based Layouts:** Dedicated wrappers for `AdminLayout` and `UserLayout` securely separate views.
 * **Global Routing:** Main React entry points and protected routes wired up via React Router.
 * **Shared UI:** Navigation headers, footers, and global styling (Tailwind CSS) successfully applied.
 * **Auth State:** Firebase Authentication and Login/Register screens are active.
 
-*Next up: AI-powered Citizen Reporting UI and the Admin Triage Dashboard just in time for the mid-evaluation.*
+*Next up: Committing the Admin Triage Dashboard to complete the mid-evaluation feature set.*
