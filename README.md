@@ -6,6 +6,13 @@ The system uses Google Gemini AI to analyze uploaded images, classify issues (li
 
 ---
 
+## 🌐 Live Demo
+
+- **Hosted Frontend:** [https://civicfix-frontend-nykz.onrender.com](https://civicfix-frontend-nykz.onrender.com)
+- **Hosted Backend API:** [https://civicfix-hackfest.onrender.com/docs](https://civicfix-hackfest.onrender.com/docs)
+
+---
+
 ## 🚀 Features
 
 - AI-powered issue detection using image upload
