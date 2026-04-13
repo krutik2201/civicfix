@@ -1,4 +1,4 @@
-export const API_BASE_URL = "http://localhost:9090";
+export const API_BASE_URL = "https://civicfix-hackfest.onrender.com";
 export const BACKEND_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_BACKEND_URL) || API_BASE_URL;
 
 export const SEVERITY_COLORS = {
